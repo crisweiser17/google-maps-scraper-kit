@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resultados — Google Maps Scraper</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#16202e; --muted:#5b6777; --line:#d9dee6; --accent:#0b6e4f; --error:#b3261e; --stripe:#f1f3f6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#10151c; --card:#19212b; --text:#e7ecf2; --muted:#9aa7b6; --line:#2c3846; --accent:#3ecf8e; --error:#ff8a80; --stripe:#1e2732; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:24px 16px 48px; background:var(--bg); color:var(--text);
+         font:15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width:1280px; margin:0 auto; }
+  h1 { font-size:22px; margin:8px 0 4px; }
+  a { color:var(--accent); }
+  .muted { color:var(--muted); font-size:13px; margin:0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-top:16px; }
+  .toolbar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-bottom:12px; }
+  .toolbar input[type=search] { flex:1 1 240px; }
+  input[type=search], select { padding:8px 10px; border:1px solid var(--line); border-radius:7px;
+                               background:var(--bg); color:var(--text); font:inherit; }
+  .button { padding:9px 16px; border-radius:7px; background:var(--accent); color:#fff; font-weight:600; text-decoration:none; }
+  button { padding:6px 12px; border:1px solid var(--line); border-radius:7px; background:var(--bg);
+           color:var(--text); font:inherit; cursor:pointer; }
+  button:disabled { opacity:.45; cursor:default; }
+  .scroll { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:8px 12px 8px 0; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; white-space:nowrap; cursor:pointer; user-select:none; }
+  th[aria-sort] { color:var(--text); }
+  td.num, th.num { text-align:right; white-space:nowrap; }
+  td.nowrap { white-space:nowrap; }
+  td.wide { min-width:200px; }
+  tbody tr:nth-child(even) { background:var(--stripe); }
+  .pager { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; margin-top:12px; }
+  .error { color:var(--error); }
+</style>
+</head>
+<body>
+<main>
+  <a href="/">← Voltar</a>
+  <h1 id="title">Carregando…</h1>
+  <p id="subtitle" class="muted"></p>
+
+  <section class="card">
+    <div class="toolbar">
+      <input type="search" id="search" placeholder="Filtrar por nome, telefone, e-mail, endereço…" aria-label="Filtrar resultados">
+      <label class="muted" for="page-size">Por página</label>
+      <select id="page-size"><option>25</option><option>50</option><option>100</option></select>
+      <a id="download" class="button" href="#">Baixar CSV</a>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr id="head"></tr></thead>
+        <tbody id="body"></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <p id="count" class="muted" role="status"></p>
+      <div>
+        <button type="button" id="prev">‹ Anterior</button>
+        <span id="page" class="muted"></span>
+        <button type="button" id="next">Próxima ›</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const COLUMNS = [
+  { key: "title", label: "Nome", css: "wide" },
+  { key: "phone", label: "Telefone", css: "nowrap" },
+  { key: "emails", label: "E-mail" },
+  { key: "website", label: "Site" },
+  { key: "category", label: "Categoria" },
+  { key: "address", label: "Endereço", css: "wide" },
+  { key: "review_rating", label: "Nota", numeric: true },
+  { key: "review_count", label: "Avaliações", numeric: true },
+  { key: "distance_km", label: "Distância (km)", numeric: true },
+];
+const $ = (id) => document.getElementById(id);
+const jobId = location.pathname.split("/").pop();
+let leads = [];
+let state = { query: "", sortKey: null, descending: false, page: 1, pageSize: 25 };
+
+function setState(changes) {
+  state = { ...state, ...changes };
+  render();
+}
+
+function toNumber(value) {
+  const number = parseFloat(value);
+  return Number.isNaN(number) ? null : number;
+}
+
+function compare(column, a, b) {
+  if (!column.numeric) return String(a).localeCompare(String(b), "pt-BR", { sensitivity: "base" });
+  const x = toNumber(a), y = toNumber(b);
+  if (x === null || y === null) return (x === null) - (y === null); // blanks last
+  return x - y;
+}
+
+function visibleLeads() {
+  const query = state.query.trim().toLowerCase();
+  const filtered = query
+    ? leads.filter((lead) => COLUMNS.some((c) => String(lead[c.key] || "").toLowerCase().includes(query)))
+    : leads;
+  const column = COLUMNS.find((c) => c.key === state.sortKey);
+  if (!column) return filtered;
+  const direction = state.descending ? -1 : 1;
+  return [...filtered].sort((a, b) => {
+    const blankA = !a[column.key], blankB = !b[column.key];
+    if (blankA || blankB) return blankA - blankB; // blanks last in both directions
+    return direction * compare(column, a[column.key], b[column.key]);
+  });
+}
+
+function link(href, text) {
+  const a = document.createElement("a");
+  a.href = href;
+  a.textContent = text;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  return a;
+}
+
+function cellContent(column, value) {
+  if (!value) return "";
+  if (column.key === "website" && /^https?:\/\//i.test(value)) {
+    return link(value, value.replace(/^https?:\/\/(www\.)?/i, "").replace(/\/$/, ""));
+  }
+  if (column.key === "emails") {
+    const box = document.createElement("span");
+    value.split(/[,;\s]+/).filter(Boolean).forEach((email, i) => {
+      if (i) box.append(document.createElement("br"));
+      box.append(link("mailto:" + email, email));
+    });
+    return box;
+  }
+  if (column.numeric) {
+    const number = toNumber(value);
+    return number === null ? value : number.toLocaleString("pt-BR");
+  }
+  return value;
+}
+
+function renderHead() {
+  $("head").replaceChildren(...COLUMNS.map((column) => {
+    const th = document.createElement("th");
+    const sorted = state.sortKey === column.key;
+    th.textContent = column.label + (sorted ? (state.descending ? " ▼" : " ▲") : "");
+    th.className = column.numeric ? "num" : "";
+    th.tabIndex = 0;
+    if (sorted) th.setAttribute("aria-sort", state.descending ? "descending" : "ascending");
+    const toggle = () => setState({ sortKey: column.key, descending: sorted && !state.descending, page: 1 });
+    th.addEventListener("click", toggle);
+    th.addEventListener("keydown", (event) => { if (event.key === "Enter") toggle(); });
+    return th;
+  }));
+}
+
+function render() {
+  const rows = visibleLeads();
+  const pages = Math.max(1, Math.ceil(rows.length / state.pageSize));
+  const page = Math.min(state.page, pages);
+  const start = (page - 1) * state.pageSize;
+  renderHead();
+  $("body").replaceChildren(...rows.slice(start, start + state.pageSize).map((lead) => {
+    const tr = document.createElement("tr");
+    COLUMNS.forEach((column) => {
+      const td = document.createElement("td");
+      td.className = column.numeric ? "num" : (column.css || "");
+      td.append(cellContent(column, lead[column.key]));
+      tr.append(td);
+    });
+    return tr;
+  }));
+  const shown = rows.length ? (start + 1) + "–" + Math.min(start + state.pageSize, rows.length) + " de " + rows.length : "Nenhum resultado";
+  $("count").textContent = shown + (rows.length !== leads.length ? " (filtrado de " + leads.length + ")" : "");
+  $("page").textContent = "Página " + page + " de " + pages;
+  $("prev").disabled = page <= 1;
+  $("next").disabled = page >= pages;
+  $("prev").onclick = () => setState({ page: page - 1 });
+  $("next").onclick = () => setState({ page: page + 1 });
+}
+
+async function load() {
+  $("download").href = "/api/jobs/" + jobId + "/download";
+  try {
+    const response = await fetch("/api/jobs/" + jobId + "/leads");
+    const body = await response.json().catch(() => null);
+    if (!body || !body.success) throw new Error((body && body.error) || "Erro inesperado (HTTP " + response.status + ").");
+    const job = body.data.job;
+    leads = body.data.leads;
+    document.title = (job.Name || "Resultados") + " — Google Maps Scraper";
+    $("title").textContent = job.Name || "Resultados";
+    $("subtitle").textContent = leads.length + " resultado(s) · " + (job.Data.keywords || []).join(", ") +
+      " · raio " + (job.Data.radius / 1000).toLocaleString("pt-BR") + " km · idioma " + job.Data.lang;
+    render();
+  } catch (error) {
+    $("title").textContent = "Não foi possível carregar";
+    $("subtitle").textContent = error.message;
+    $("subtitle").className = "error";
+  }
+}
+
+$("search").addEventListener("input", (event) => setState({ query: event.target.value, page: 1 }));
+$("page-size").addEventListener("change", (event) => setState({ pageSize: Number(event.target.value), page: 1 }));
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Google Maps Scraper — busca por cidade</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#16202e; --muted:#5b6777; --line:#d9dee6; --accent:#0b6e4f; --error:#b3261e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#10151c; --card:#19212b; --text:#e7ecf2; --muted:#9aa7b6; --line:#2c3846; --accent:#3ecf8e; --error:#ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:24px 16px 48px; background:var(--bg); color:var(--text);
+         font:15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width:860px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  h2 { font-size:16px; margin:0 0 12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:20px; margin-top:16px; }
+  .field { margin-bottom:16px; }
+  .row { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:16px; }
+  label { display:block; font-weight:600; margin-bottom:4px; }
+  .hint { color:var(--muted); font-size:13px; margin:4px 0 0; }
+  input[type=text], input[type=number], select, textarea {
+    width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:7px;
+    background:var(--bg); color:var(--text); font:inherit; }
+  textarea { min-height:120px; resize:vertical; }
+  .check { display:flex; align-items:center; gap:8px; }
+  .check label { margin:0; font-weight:500; }
+  button { padding:10px 18px; border:0; border-radius:7px; background:var(--accent); color:#fff;
+           font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  button.link { background:none; color:var(--error); padding:0; font-weight:500; }
+  a { color:var(--accent); }
+  .status { min-height:20px; margin:8px 0 0; font-size:13px; color:var(--muted); }
+  .status.error { color:var(--error); }
+  .status.ok { color:var(--accent); }
+  .scroll { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:8px 10px 8px 0; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; white-space:nowrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Google Maps Scraper</h1>
+  <p class="hint">Busca por cidade e raio. O motor roda local em <a href="http://localhost:8080" target="_blank" rel="noopener">localhost:8080</a>.</p>
+
+  <form id="job-form" class="card" novalidate>
+    <div class="field">
+      <label for="keywords">Palavras-chave</label>
+      <textarea id="keywords" placeholder="dentistas&#10;clínica odontológica&#10;ortodontista"></textarea>
+      <p class="hint"><strong>Uma por linha</strong> — não separe por vírgula. Cada linha vira uma busca separada no Maps e tudo sai no mesmo CSV. Linhas repetidas ou começando com <code>#</code> são ignoradas. Dica: colocar a cidade na frase ("dentistas em Curitiba") costuma deixar o resultado mais preciso.</p>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="city">Cidade</label>
+        <input type="text" id="city" placeholder="Curitiba, PR" autocomplete="off">
+        <p id="city-status" class="status">Digite a cidade; as coordenadas são buscadas sozinhas.</p>
+      </div>
+      <div class="field">
+        <label for="radius">Raio (km)</label>
+        <input type="number" id="radius" value="10" min="0.5" max="200" step="0.5">
+        <p class="hint">Distância a partir do centro da cidade. Resultados fora do raio saem do CSV.</p>
+      </div>
+      <div class="field">
+        <label for="lang">Idioma</label>
+        <select id="lang">
+          <option value="pt" selected>Português</option>
+          <option value="en">English</option>
+        </select>
+        <p class="hint">Idioma das categorias e dos textos do Maps.</p>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="depth">Profundidade</label>
+        <input type="number" id="depth" value="5" min="1" max="50" step="1">
+        <p class="hint">Quantas vezes rola a lista. 5 ≈ dezenas de resultados por palavra. Acima de 15 aumenta o risco de bloqueio temporário de IP.</p>
+      </div>
+      <div class="field">
+        <label for="minutes">Tempo máximo (min)</label>
+        <input type="number" id="minutes" value="10" min="1" max="120" step="1">
+        <p class="hint">O job para sozinho ao atingir esse tempo.</p>
+      </div>
+      <div class="field">
+        <label for="name">Nome do job (opcional)</label>
+        <input type="text" id="name" placeholder="automático">
+      </div>
+    </div>
+
+    <div class="field check">
+      <input type="checkbox" id="email" checked>
+      <label for="email">Buscar e-mails nos sites (mais lento)</label>
+    </div>
+
+    <button type="submit" id="submit">Iniciar busca</button>
+    <p id="form-status" class="status" role="status"></p>
+  </form>
+
+  <section class="card">
+    <h2>Jobs</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Nome</th><th>Palavras</th><th>Raio</th><th>Idioma</th><th>Status</th><th></th></tr></thead>
+        <tbody id="jobs"></tbody>
+      </table>
+    </div>
+    <p id="jobs-status" class="status"></p>
+  </section>
+</main>
+
+<script>
+const POLL_MS = 5000;
+const STATUS_LABEL = { pending: "na fila", working: "rodando…", ok: "pronto", failed: "falhou" };
+const $ = (id) => document.getElementById(id);
+let place = null; // { query, lat, lon } of the last resolved city
+
+function setStatus(el, text, kind) {
+  el.textContent = text;
+  el.className = "status" + (kind ? " " + kind : "");
+}
+
+async function api(path, options) {
+  const response = await fetch(path, options);
+  const body = await response.json().catch(() => null);
+  if (!body || !body.success) throw new Error((body && body.error) || "Erro inesperado (HTTP " + response.status + ").");
+  return body.data;
+}
+
+async function resolveCity() {
+  const query = $("city").value.trim();
+  if (!query) { place = null; throw new Error("Cidade: informe o nome da cidade."); }
+  if (place && place.query === query) return place;
+  setStatus($("city-status"), "Localizando…");
+  try {
+    const hit = await api("/api/geocode?q=" + encodeURIComponent(query));
+    place = { query, lat: hit.lat, lon: hit.lon };
+    setStatus($("city-status"), "📍 " + hit.display_name + " (" + hit.lat.toFixed(4) + ", " + hit.lon.toFixed(4) + ")", "ok");
+    return place;
+  } catch (error) {
+    place = null;
+    setStatus($("city-status"), error.message, "error");
+    throw error;
+  }
+}
+
+$("city").addEventListener("change", () => { resolveCity().catch(() => {}); });
+
+$("job-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  $("submit").disabled = true;
+  setStatus($("form-status"), "Criando job…");
+  try {
+    const resolved = await resolveCity();
+    const payload = {
+      name: $("name").value, keywords: $("keywords").value, city: resolved.query,
+      lat: resolved.lat, lon: resolved.lon, radius_km: $("radius").value, lang: $("lang").value,
+      depth: $("depth").value, max_minutes: $("minutes").value, email: $("email").checked,
+    };
+    const created = await api("/api/jobs", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    setStatus($("form-status"), "Job criado com " + created.job.keywords.length + " palavra(s)-chave. Acompanhe abaixo.", "ok");
+    await loadJobs();
+  } catch (error) {
+    setStatus($("form-status"), error.message, "error");
+  } finally {
+    $("submit").disabled = false;
+  }
+});
+
+function cell(row, content) {
+  const td = document.createElement("td");
+  td.append(content);
+  row.append(td);
+}
+
+function actions(job) {
+  const box = document.createElement("span");
+  if (job.Status === "ok") {
+    const view = document.createElement("a");
+    view.href = "/jobs/" + job.ID;
+    view.textContent = "Visualizar";
+    const link = document.createElement("a");
+    link.href = "/api/jobs/" + job.ID + "/download";
+    link.textContent = "Baixar CSV";
+    box.append(view, " · ", link, " · ");
+  }
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "link";
+  remove.textContent = "Excluir";
+  remove.addEventListener("click", async () => {
+    if (!confirm("Excluir o job \"" + job.Name + "\" e os resultados dele?")) return;
+    try { await api("/api/jobs/" + job.ID, { method: "DELETE" }); await loadJobs(); }
+    catch (error) { setStatus($("jobs-status"), error.message, "error"); }
+  });
+  box.append(remove);
+  return box;
+}
+
+async function loadJobs() {
+  try {
+    const jobs = await api("/api/jobs");
+    const rows = jobs.map((job) => {
+      const row = document.createElement("tr");
+      cell(row, job.Name || "—");
+      cell(row, (job.Data.keywords || []).join(", "));
+      cell(row, (job.Data.radius / 1000).toLocaleString("pt-BR") + " km");
+      cell(row, job.Data.lang || "—");
+      cell(row, STATUS_LABEL[job.Status] || job.Status);
+      cell(row, actions(job));
+      return row;
+    });
+    $("jobs").replaceChildren(...rows);
+    setStatus($("jobs-status"), jobs.length ? "" : "Nenhum job ainda.");
+  } catch (error) {
+    setStatus($("jobs-status"), error.message, "error");
+  }
+}
+
+loadJobs();
+setInterval(loadJobs, POLL_MS);
+</script>
+</body>
+</html>

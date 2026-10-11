@@ -85,6 +85,15 @@ Plain language works too. The skill triggers on requests like *"build me a lead 
 Denver, CO"* or *"pull Google Maps listings for plumbers in Phoenix"*. It does not scrape social
 platforms directly.
 
+### Local form (city + radius in km)
+
+```bash
+python3 scripts/ui.py     # open http://127.0.0.1:8090
+```
+
+Type a city name instead of coordinates, set the radius in kilometres, pick Portuguese or English,
+and paste keywords one per line. Downloads are trimmed to the lead fields and to the radius.
+
 ### Without Claude
 
 `scripts/scrape.py` is a standalone, dependency-free Python CLI: single queries, batches, geocoding,
@@ -140,4 +149,8 @@ Contributions: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.m
 
 ## License
 
-Built by [Mahan](https://github.com/Mahanaicoach). MIT licensed. Third-party components: [CREDITS.md](CREDITS.md).
+This is a fork by [Cris Weiser](https://github.com/crisweiser17) of
+[Mahanaicoach/google-maps-scraper-kit](https://github.com/Mahanaicoach/google-maps-scraper-kit). The fork adds
+the local form: city + radius in km, Portuguese/English, one keyword per line, and a results table.
+
+Original kit built by [Mahan](https://github.com/Mahanaicoach). MIT licensed. Third-party components: [CREDITS.md](CREDITS.md).
