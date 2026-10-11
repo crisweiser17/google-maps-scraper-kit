@@ -72,6 +72,24 @@ class BuildJobBodyTest(unittest.TestCase):
             jobform.build_job_body({**VALID, "lat": None})
 
 
+class CompleteRowsTest(unittest.TestCase):
+    FULL = {"title": "A", "emails": ""}
+    TRUNCATED = {"title": "B", "emails": None}
+
+    def test_drops_truncated_last_row_while_job_is_running(self):
+        self.assertEqual(jobform.complete_rows([self.FULL, self.TRUNCATED], True), [self.FULL])
+
+    def test_keeps_complete_rows_while_job_is_running(self):
+        self.assertEqual(jobform.complete_rows([self.FULL, self.FULL], True), [self.FULL, self.FULL])
+
+    def test_keeps_every_row_of_a_finished_job(self):
+        rows = [self.FULL, self.TRUNCATED]
+        self.assertEqual(jobform.complete_rows(rows, False), rows)
+
+    def test_handles_empty_results(self):
+        self.assertEqual(jobform.complete_rows([], True), [])
+
+
 class LeadsWithinRadiusTest(unittest.TestCase):
     ROWS = [{"title": "Perto", "latitude": "-23.5510", "longitude": "-46.6340", "cid": "1"},
             {"title": "Longe", "latitude": "-22.9068", "longitude": "-43.1729", "cid": "2"},

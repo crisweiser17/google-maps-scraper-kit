@@ -78,6 +78,16 @@ def build_job_body(payload):
             "email": bool(payload.get("email")), "max_time": minutes * 60}
 
 
+def complete_rows(rows, is_running):
+    """Drop the last row of a still-running job when the scraper was caught mid-write.
+
+    csv.DictReader fills the columns a truncated line never reached with None.
+    """
+    if is_running and rows and None in rows[-1].values():
+        return rows[:-1]
+    return rows
+
+
 def _distance_km(row, lat, lon):
     try:
         return haversine_km(lat, lon, float(row["latitude"]), float(row["longitude"]))

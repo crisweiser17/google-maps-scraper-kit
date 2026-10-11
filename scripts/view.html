@@ -36,6 +36,14 @@
   tbody tr:nth-child(even) { background:var(--stripe); }
   .pager { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; margin-top:12px; }
   .error { color:var(--error); }
+  .live { display:inline-flex; align-items:center; gap:8px; margin:8px 0 0; font-size:13px; font-weight:600; color:var(--muted); }
+  .live::before { content:""; width:9px; height:9px; border-radius:50%; background:var(--muted); }
+  .live.running { color:var(--accent); }
+  .live.running::before { background:var(--accent); animation:pulse 1.2s ease-in-out infinite; }
+  .live.failed { color:var(--error); }
+  .live.failed::before { background:var(--error); }
+  @keyframes pulse { 50% { opacity:.25; } }
+  @media (prefers-reduced-motion: reduce) { .live.running::before { animation:none; } }
 </style>
 </head>
 <body>
@@ -43,6 +51,7 @@
   <a href="/">← Voltar</a>
   <h1 id="title">Carregando…</h1>
   <p id="subtitle" class="muted"></p>
+  <p id="live" class="live" role="status"></p>
 
   <section class="card">
     <div class="toolbar">
@@ -80,6 +89,13 @@ const COLUMNS = [
   { key: "review_count", label: "Avaliações", numeric: true },
   { key: "distance_km", label: "Distância (km)", numeric: true },
 ];
+const POLL_MS = 5000;
+const LIVE = {
+  pending: { text: "Na fila — aguardando o job anterior terminar", css: "" },
+  working: { text: "Coletando… a tabela atualiza sozinha", css: "running" },
+  ok: { text: "Concluído", css: "" },
+  failed: { text: "O job falhou. Abaixo, o que foi coletado até a falha.", css: "failed" },
+};
 const $ = (id) => document.getElementById(id);
 const jobId = location.pathname.split("/").pop();
 let leads = [];
@@ -186,21 +202,36 @@ function render() {
   $("next").onclick = () => setState({ page: page + 1 });
 }
 
+function renderJob(job) {
+  const isRunning = job.Status === "pending" || job.Status === "working";
+  const live = LIVE[job.Status] || { text: job.Status, css: "" };
+  document.title = (job.Name || "Resultados") + " — Google Maps Scraper";
+  $("title").textContent = job.Name || "Resultados";
+  $("subtitle").textContent = leads.length + " resultado(s)" + (isRunning ? " até agora" : "") + " · " +
+    (job.Data.keywords || []).join(", ") + " · raio " + (job.Data.radius / 1000).toLocaleString("pt-BR") +
+    " km · idioma " + job.Data.lang;
+  $("subtitle").className = "muted";
+  $("live").textContent = live.text;
+  $("live").className = "live " + live.css;
+  $("download").textContent = isRunning ? "Baixar CSV (parcial)" : "Baixar CSV";
+  $("download").hidden = leads.length === 0;
+  return isRunning;
+}
+
 async function load() {
   $("download").href = "/api/jobs/" + jobId + "/download";
   try {
     const response = await fetch("/api/jobs/" + jobId + "/leads");
     const body = await response.json().catch(() => null);
     if (!body || !body.success) throw new Error((body && body.error) || "Erro inesperado (HTTP " + response.status + ").");
-    const job = body.data.job;
     leads = body.data.leads;
-    document.title = (job.Name || "Resultados") + " — Google Maps Scraper";
-    $("title").textContent = job.Name || "Resultados";
-    $("subtitle").textContent = leads.length + " resultado(s) · " + (job.Data.keywords || []).join(", ") +
-      " · raio " + (job.Data.radius / 1000).toLocaleString("pt-BR") + " km · idioma " + job.Data.lang;
+    const isRunning = renderJob(body.data.job);
     render();
+    if (isRunning) setTimeout(load, POLL_MS);
   } catch (error) {
-    $("title").textContent = "Não foi possível carregar";
+    // Keep rows already on screen; a job that vanished or a stopped server ends the live updates.
+    if (!leads.length) $("title").textContent = "Não foi possível carregar";
+    $("live").textContent = "";
     $("subtitle").textContent = error.message;
     $("subtitle").className = "error";
   }

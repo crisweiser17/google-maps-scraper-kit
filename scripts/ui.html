@@ -38,6 +38,8 @@
   table { width:100%; border-collapse:collapse; font-size:14px; }
   th, td { text-align:left; padding:8px 10px 8px 0; border-bottom:1px solid var(--line); vertical-align:top; }
   th { color:var(--muted); font-weight:600; white-space:nowrap; }
+  .num { text-align:right; white-space:nowrap; }
+  .actions { white-space:nowrap; }
 </style>
 </head>
 <body>
@@ -103,7 +105,7 @@
     <h2>Jobs</h2>
     <div class="scroll">
       <table>
-        <thead><tr><th>Nome</th><th>Palavras</th><th>Raio</th><th>Idioma</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Nome</th><th>Palavras</th><th>Raio</th><th>Idioma</th><th>Status</th><th class="num">Resultados</th><th></th></tr></thead>
         <tbody id="jobs"></tbody>
       </table>
     </div>
@@ -171,22 +173,30 @@ $("job-form").addEventListener("submit", async (event) => {
   }
 });
 
-function cell(row, content) {
+function cell(row, content, css) {
   const td = document.createElement("td");
+  if (css) td.className = css;
   td.append(content);
   row.append(td);
 }
 
+function resultCount(job) {
+  if (job.Status === "pending" || job.lead_count === null) return "—";
+  const count = job.lead_count.toLocaleString("pt-BR");
+  return job.Status === "working" ? count + " até agora" : count;
+}
+
 function actions(job) {
   const box = document.createElement("span");
+  const view = document.createElement("a");
+  view.href = "/jobs/" + job.ID;
+  view.textContent = job.Status === "ok" ? "Visualizar" : "Acompanhar ao vivo";
+  box.append(view, " · ");
   if (job.Status === "ok") {
-    const view = document.createElement("a");
-    view.href = "/jobs/" + job.ID;
-    view.textContent = "Visualizar";
     const link = document.createElement("a");
     link.href = "/api/jobs/" + job.ID + "/download";
     link.textContent = "Baixar CSV";
-    box.append(view, " · ", link, " · ");
+    box.append(link, " · ");
   }
   const remove = document.createElement("button");
   remove.type = "button";
@@ -211,7 +221,8 @@ async function loadJobs() {
       cell(row, (job.Data.radius / 1000).toLocaleString("pt-BR") + " km");
       cell(row, job.Data.lang || "—");
       cell(row, STATUS_LABEL[job.Status] || job.Status);
-      cell(row, actions(job));
+      cell(row, resultCount(job), "num");
+      cell(row, actions(job), "actions");
       return row;
     });
     $("jobs").replaceChildren(...rows);

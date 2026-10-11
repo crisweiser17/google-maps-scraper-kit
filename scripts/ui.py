@@ -6,12 +6,12 @@
 Standard library only. Binds to 127.0.0.1 — like the scraper itself, it has no authentication.
 The city is resolved with OpenStreetMap Nominatim (free, ~1 request/sec; fine for a form).
 """
-import csv, io, json, os, re, sys, urllib.error, urllib.parse, urllib.request
+import csv, functools, io, json, os, re, sys, urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from jobform import build_job_body, leads_within_radius
+from jobform import build_job_body, complete_rows, leads_within_radius
 from scrape import LEAD, UA, req
 
 HOST = "127.0.0.1"
@@ -46,19 +46,42 @@ def find_job(job_id):
     return json.loads(raw)
 
 
-def finished_job(job_id):
-    job = find_job(job_id)
-    if job.get("Status") != "ok":
-        raise BadRequest("Esse job ainda não terminou.")
-    return job
+def job_rows(job):
+    """Raw result rows. Partial while the job runs; empty until the scraper writes the first one."""
+    if job.get("Status") == "pending":
+        return []
+    try:
+        _, raw = req("GET", f"/api/v1/jobs/{job['ID']}/download")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:  # results file not created yet
+            return []
+        raise
+    rows = list(csv.DictReader(io.StringIO(raw.decode("utf-8", "replace"))))
+    return complete_rows(rows, job.get("Status") != "ok")
 
 
 def job_leads(job):
-    """Job results trimmed to lead fields and to the job's radius."""
-    _, raw = req("GET", f"/api/v1/jobs/{job['ID']}/download")
-    rows = list(csv.DictReader(io.StringIO(raw.decode("utf-8", "replace"))))
+    """Job results so far, trimmed to lead fields and to the job's radius."""
+    rows = job_rows(job)
     data = job["Data"]
     return leads_within_radius(rows, LEAD, data["lat"], data["lon"], data["radius"])
+
+
+@functools.lru_cache(maxsize=256)
+def finished_lead_count(job_id):
+    """Lead count of a finished job. Cached: its results no longer change."""
+    return len(job_leads(find_job(job_id)))
+
+
+def lead_count(job):
+    """How many leads the job's CSV holds right now, or None when it cannot be read."""
+    try:
+        if job.get("Status") == "ok":
+            return finished_lead_count(job["ID"])
+        return len(job_leads(job))
+    except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
+        print(f"could not count leads of job {job.get('ID')}: {e}", file=sys.stderr)
+        return None
 
 
 def leads_csv(leads):
@@ -156,7 +179,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def list_jobs(self, _query):
         _, raw = req("GET", "/api/v1/jobs")
-        self._json(200, json.loads(raw) or [])
+        self._json(200, [{**job, "lead_count": lead_count(job)} for job in json.loads(raw) or []])
 
     def create_job(self, _query):
         body = build_job_body(self._read_json())
@@ -167,12 +190,15 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, VIEW_PAGE.read_bytes(), "text/html; charset=utf-8")
 
     def leads(self, _query, job_id):
-        job = finished_job(job_id)
+        job = find_job(job_id)
         self._json(200, {"job": job, "fields": FIELDS, "leads": job_leads(job)})
 
     def download(self, _query, job_id):
-        job = finished_job(job_id)
-        self._send(200, leads_csv(job_leads(job)), "text/csv; charset=utf-8",
+        job = find_job(job_id)
+        leads = job_leads(job)
+        if not leads:
+            raise BadRequest("Esse job ainda não tem resultados para baixar.")
+        self._send(200, leads_csv(leads), "text/csv; charset=utf-8",
                    {"Content-Disposition": f'attachment; filename="{csv_filename(job)}"'})
 
     def delete_job(self, _query, job_id):
